@@ -40,7 +40,7 @@ void RaspivideoInitialize();
     immediately starts capturing frames. This function assumes that width and
     height are validated by the caller.
 */
-int RaspivideoCreateCamera(RaspivideoCamera** c, int width, int height, Format format);
+RaspivideoErrorCode RaspivideoCreateCamera(RaspivideoCamera** c, int width, int height, Format format);
 
 /*
     RaspivideoLockFrame locks the frame information. It has to be called before
@@ -60,7 +60,7 @@ void RaspivideoUnlockFrame(RaspivideoCamera* c);
     next frame becomes ready.
     RaspivideoLockFrame must be called before calling this function.
 */
-int RaspivideoRetrieveFrame(RaspivideoCamera* c, char* buffer);
+RaspivideoErrorCode RaspivideoRetrieveFrame(RaspivideoCamera* c, char* buffer);
 
 /*
     RaspivideoFrameSize returns the size of the buffer required to have the

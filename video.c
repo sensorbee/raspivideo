@@ -265,7 +265,7 @@ static int createCameraComponent(RaspivideoCamera* c) {
 
     // TODO: when supporting JPEG, an encoder needs to be created for hardware encoding.
 
-    // TODO: This pool should be destroyed by mmal_destroy_component but need to be checked.
+    // TODO: This pool should indirectly be destroyed by mmal_destroy_component but need to be checked.
     c->pool = mmal_port_pool_create(video, video->buffer_num, video->buffer_size);
     if (c->pool == NULL) {
         return RaspivideoCannotCreatePool;
