@@ -1,7 +1,7 @@
 package plugin
 
 import (
-	"github.com/nobu-k/raspivideo"
+	"gopkg.in/sensorbee/raspivideo.v0"
 	"gopkg.in/sensorbee/sensorbee.v0/bql"
 )
 
