@@ -79,8 +79,6 @@ size_t RaspivideoFrameSize(RaspivideoCamera* c);
 */
 void RaspivideoDestroyCamera(RaspivideoCamera* c);
 
-const char* ErrorMessage(int errorCode);
-
 #ifdef __cplusplus
 }
 #endif
