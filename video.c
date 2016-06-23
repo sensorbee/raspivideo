@@ -7,22 +7,24 @@
 #include "interface/mmal/util/mmal_util_params.h"
 #include "interface/vcos/vcos.h"
 
+#include "video.h"
+
 // TODO: implement zero copy version
 
-struct ImageBuffer {
+typedef struct {
     char* buffer;
     size_t capacity;
     size_t size;
-};
+} ImageBuffer;
 
 struct RaspivideoCamera {
-    int widht, height;
+    int width, height;
     RaspivideoFormat format;
     MMAL_COMPONENT_T* camera;
     MMAL_POOL_T* pool;
 
     pthread_mutex_t mutex;
-    pthread_condition_t cond;
+    pthread_cond_t cond;
 
     // current is the buffer that is being written by the callback.
     ImageBuffer current;
@@ -45,7 +47,7 @@ void RaspivideoInitialize() {
     bcm_host_init();
 }
 
-int RaspivideoCreateCamera(RaspivideoCamera** camera, int width, int height, Format format) {
+RaspivideoErrorCode RaspivideoCreateCamera(RaspivideoCamera** camera, int width, int height, RaspivideoFormat format) {
     RaspivideoErrorCode ec;
     int mutexInit = 0, condInit = 0;
     RaspivideoCamera* c = (RaspivideoCamera*) malloc(sizeof(RaspivideoCamera));
@@ -99,9 +101,9 @@ void RaspivideoUnlockFrame(RaspivideoCamera* c) {
     pthread_mutex_unlock(&c->mutex);
 }
 
-int RaspivideoRetrieveFrame(RaspivideoCamera* c, char* buffer) {
+RaspivideoErrorCode RaspivideoRetrieveFrame(RaspivideoCamera* c, char* buffer) {
     while (!c->ready && !c->finishing) {
-        ptherad_cond_wait(&c->cond, &c->mutex);
+        pthread_cond_wait(&c->cond, &c->mutex);
     }
     if (c->ready && !c->finishing) {
         memcpy(buffer, c->captured.buffer, c->captured.size);
@@ -113,7 +115,7 @@ int RaspivideoRetrieveFrame(RaspivideoCamera* c, char* buffer) {
 
 size_t RaspivideoFrameSize(RaspivideoCamera* c) {
     while (!c->ready && !c->finishing) {
-        ptherad_cond_wait(&c->cond, &c->mutex);
+        pthread_cond_wait(&c->cond, &c->mutex);
     }
     return c->finishing ? 0 : c->captured.size;
 }
@@ -123,7 +125,7 @@ void RaspivideoDestroyCamera(RaspivideoCamera* c) {
     c->finishing = 1;
     pthread_cond_broadcast(&c->cond);
     while (c->waiting > 0) {
-        ptherad_cond_wait(&c->cond, &c->mutex);
+        pthread_cond_wait(&c->cond, &c->mutex);
     }
 
     // TODO: destroy pool if it isn't actually destroyed by mmal_component_destroy(c->camera)
@@ -156,13 +158,13 @@ static void cameraOutputCallback(MMAL_PORT_T* port, MMAL_BUFFER_HEADER_T* buffer
     c->current.size += buffer->length;
 
     // Check the end of the frame
-    if (buffer->flag & (MMAL_BUFFER_HEADER_FLAG_FRAME_END | MMAL_BUFFER_HEADER_FLAG_TRANSMISSION_FAILED)) {
+    if (buffer->flags & (MMAL_BUFFER_HEADER_FLAG_FRAME_END | MMAL_BUFFER_HEADER_FLAG_TRANSMISSION_FAILED)) {
         // TODO: notify transmission failure
         pthread_mutex_lock(&c->mutex);
         ImageBuffer tmp = c->current;
         c->current = c->captured;
         c->captured = tmp;
-        c->current->size = 0;
+        c->current.size = 0;
         c->ready = 1;
         pthread_cond_broadcast(&c->cond);
         pthread_mutex_unlock(&c->mutex);
@@ -172,7 +174,7 @@ static void cameraOutputCallback(MMAL_PORT_T* port, MMAL_BUFFER_HEADER_T* buffer
 
     // Re-send buffer
     if (port->is_enabled) {
-        MMAL_BUFFER_HEADER_T* newBuffer = mmal_queue_get(c->pool);
+        MMAL_BUFFER_HEADER_T* newBuffer = mmal_queue_get(c->pool->queue);
         if (newBuffer) {
             if (mmal_port_send_buffer(port, newBuffer) != MMAL_SUCCESS) {
                 // TODO: notify this error
@@ -222,7 +224,7 @@ static int createCameraComponent(RaspivideoCamera* c) {
     }
 
     video = camera->output[1];
-    video->userdata = (MMAL_PORT_USERDATA_T*) c;
+    video->userdata = (struct MMAL_PORT_USERDATA_T*) c;
     video->buffer_num = video->buffer_num_recommended;
     if (video->buffer_num < video->buffer_num_min) {
         video->buffer_num = video->buffer_num_min;
@@ -234,13 +236,13 @@ static int createCameraComponent(RaspivideoCamera* c) {
 
     {
         MMAL_ES_FORMAT_T* f = video->format;
-        switch (format) {
+        switch (c->format) {
         case RaspivideoFormatRGB:
             f->encoding = MMAL_ENCODING_RGB24;
             f->encoding_variant = MMAL_ENCODING_RGB24;
             break;
         case RaspivideoFormatBGR:
-            f->encoding = MMAL_ENCODING_BGR24:
+            f->encoding = MMAL_ENCODING_BGR24;
             f->encoding_variant = MMAL_ENCODING_BGR24;
 
             // Assuming validation is done in Go

@@ -1,15 +1,15 @@
 package raspivideo
 
 /*
-#cgo CPPFLAGS: -I/opt/vc/include/interface/vcos -I/opt/vc/include/interface/vcos/pthreads -I/opt/vc/include/interface/vmcs_host/linux
+#cgo CPPFLAGS: -I/opt/vc/include -I/opt/vc/include/interface/vcos -I/opt/vc/include/interface/vcos/pthreads -I/opt/vc/include/interface/vmcs_host/linux
 #cgo LDFLAGS: -L/opt/vc/lib -lmmal -lmmal_core -lmmal_util -lvcos -lbcm_host
 #include "video.h"
 */
 import "C"
 
 import (
-	"fmt"
 	"errors"
+	"fmt"
 	"gopkg.in/sensorbee/sensorbee.v0/bql"
 	"gopkg.in/sensorbee/sensorbee.v0/core"
 	"gopkg.in/sensorbee/sensorbee.v0/data"
@@ -26,6 +26,7 @@ var (
 type Source struct {
 	width, height int
 	format        C.RaspivideoFormat
+	formatStr     string
 }
 
 func (s *Source) GenerateStream(ctx *core.Context, w core.Writer) error {
@@ -47,11 +48,11 @@ func (s *Source) GenerateStream(ctx *core.Context, w core.Writer) error {
 
 			size := C.RaspivideoFrameSize(camera)
 			if size == 0 {
-				return C.RasspivideoCameraDestroyed
+				return nil, C.RaspivideoCameraDestroyed
 			}
 			frame := make([]byte, size)
 			res := C.RaspivideoRetrieveFrame(camera, (*C.char)(unsafe.Pointer(&frame[0])))
-			return frame, nil
+			return frame, res
 		}()
 
 		if ec != C.RaspivideoSuccess {
@@ -64,10 +65,10 @@ func (s *Source) GenerateStream(ctx *core.Context, w core.Writer) error {
 		}
 
 		t := core.NewTuple(data.Map{
-			"width":  s.width,
-			"height": s.height,
-			"format": "cvmat",
-			"mode":   s.format,
+			"width":  data.Int(s.width),
+			"height": data.Int(s.height),
+			"format": data.String("cvmat"),
+			"mode":   data.String(s.formatStr),
 			"image":  data.Blob(frame),
 		})
 		if err := w.Write(ctx, t); err != nil {
@@ -86,6 +87,8 @@ func toError(c C.RaspivideoErrorCode) error {
 			return "cannot allocate memory"
 		case C.RaspivideoCannotInitMutex:
 			return "cannot init mutex"
+		case C.RaspivideoCannotInitCond:
+			return "cannot init cond"
 		case C.RaspivideoCannotCreateCamera:
 			return "cannot create camera object"
 		case C.RaspivideoCannotSetCamera:
@@ -119,9 +122,10 @@ func (s *Source) Stop(ctx *core.Context) error {
 
 func CreateSource(ctx *core.Context, ioParams *bql.IOParams, params data.Map) (core.Source, error) {
 	s := &Source{
-		width: 640,
-		height: 480,
-		format: "bgr",
+		width:     640,
+		height:    480,
+		format:    C.RaspivideoFormatBGR,
+		formatStr: "bgr",
 	}
 
 	if v, ok := params["width"]; ok {
@@ -129,21 +133,21 @@ func CreateSource(ctx *core.Context, ioParams *bql.IOParams, params data.Map) (c
 		if err != nil {
 			return nil, fmt.Errorf("width parameter must be an integer: %v", err)
 		}
-		s.width = w
+		s.width = int(w)
 	}
 	if v, ok := params["height"]; ok {
 		h, err := data.AsInt(v)
 		if err != nil {
 			return nil, fmt.Errorf("height parameter must be an integer: %v", err)
 		}
-		s.height = h
+		s.height = int(h)
 	}
 	if v, ok := params["format"]; ok {
 		f, err := data.AsString(v)
 		if err != nil {
 			return nil, fmt.Errorf("format parameter must be a string: %v", err)
 		}
-		s.format = f
+		s.formatStr = f
 	}
 
 	switch {
@@ -152,13 +156,20 @@ func CreateSource(ctx *core.Context, ioParams *bql.IOParams, params data.Map) (c
 		return nil, fmt.Errorf("unsupported frame size: %vx%v", s.width, s.height)
 	}
 
-	switch s.format {
-	case "rgb", "bgr":
-	default:
-		return nil fmt.Errorf("unsupported format: %v", s.format)
+	if f, ok := validFormats[s.formatStr]; !ok {
+		return nil, fmt.Errorf("unsupported format: %v", s.format)
+	} else {
+		s.format = f
 	}
 	return core.ImplementSourceStop(s), nil
 }
+
+var (
+	validFormats = map[string]C.RaspivideoFormat{
+		"rgb": C.RaspivideoFormatRGB,
+		"bgr": C.RaspivideoFormatBGR,
+	}
+)
 
 func init() {
 	C.RaspivideoInitialize()

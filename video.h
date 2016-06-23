@@ -1,22 +1,25 @@
 #ifndef SB_RASPIVIDEO_H_
 #define SB_RASPIVIDEO_H_
 
+#include "stddef.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-struct RaspivideoCamera;
+typedef struct RaspivideoCamera RaspivideoCamera;
 
-enum RaspivideoFormat {
+typedef enum {
     RaspivideoFormatRGB,
     RaspivideoFormatBGR,
     // TODO: support RaspivideoFormatJpeg
-};
+} RaspivideoFormat;
 
-enum RaspivideoErrorCode {
+typedef enum {
     RaspivideoSuccess,
     RaspivideoNoMemory,
     RaspivideoCannotInitMutex,
+    RaspivideoCannotInitCond,
     RaspivideoCannotCreateCamera,
     RaspivideoCannotSetCamera,
     RaspivideoCannotSetCameraConfig,
@@ -27,7 +30,7 @@ enum RaspivideoErrorCode {
     RaspivideoCannotSendBuffer,
     RaspivideoCannotStartCapture,
     RaspivideoCameraDestroyed,
-};
+} RaspivideoErrorCode;
 
 /*
     RaspivideoInitialize initializes the multimedia library of Raspberry Pi. It
@@ -40,7 +43,7 @@ void RaspivideoInitialize();
     immediately starts capturing frames. This function assumes that width and
     height are validated by the caller.
 */
-RaspivideoErrorCode RaspivideoCreateCamera(RaspivideoCamera** c, int width, int height, Format format);
+RaspivideoErrorCode RaspivideoCreateCamera(RaspivideoCamera** c, int width, int height, RaspivideoFormat format);
 
 /*
     RaspivideoLockFrame locks the frame information. It has to be called before
