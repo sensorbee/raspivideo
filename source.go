@@ -67,7 +67,7 @@ func (s *Source) GenerateStream(ctx *core.Context, w core.Writer) error {
 		t := core.NewTuple(data.Map{
 			"width":       data.Int(s.width),
 			"height":      data.Int(s.height),
-			"format":      data.String("cvmat"),
+			"format":      data.String("raw"),
 			"color_model": data.String(s.formatStr),
 			"image":       data.Blob(frame),
 		})
