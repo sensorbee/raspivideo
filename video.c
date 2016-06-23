@@ -130,8 +130,10 @@ void RaspivideoDestroyCamera(RaspivideoCamera* c) {
 
     // TODO: destroy pool if it isn't actually destroyed by mmal_component_destroy(c->camera)
     if (c->camera) mmal_component_destroy(c->camera);
-    free(c);
     pthread_mutex_unlock(&c->mutex);
+    pthread_mutex_destroy(&c->mutex);
+    pthread_cond_destroy(&c->cond);
+    free(c);
 }
 
 static void cameraOutputCallback(MMAL_PORT_T* port, MMAL_BUFFER_HEADER_T* buffer) {
@@ -238,12 +240,13 @@ static int createCameraComponent(RaspivideoCamera* c) {
         MMAL_ES_FORMAT_T* f = video->format;
         switch (c->format) {
         case RaspivideoFormatRGB:
-            f->encoding = MMAL_ENCODING_RGB24;
-            f->encoding_variant = MMAL_ENCODING_RGB24;
-            break;
-        case RaspivideoFormatBGR:
+            // In libmmal's RGB, colors are in BGR order in a byte array.
             f->encoding = MMAL_ENCODING_BGR24;
             f->encoding_variant = MMAL_ENCODING_BGR24;
+            break;
+        case RaspivideoFormatBGR:
+            f->encoding = MMAL_ENCODING_RGB24;
+            f->encoding_variant = MMAL_ENCODING_RGB24;
 
             // Assuming validation is done in Go
         }

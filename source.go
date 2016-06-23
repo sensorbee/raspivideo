@@ -65,11 +65,11 @@ func (s *Source) GenerateStream(ctx *core.Context, w core.Writer) error {
 		}
 
 		t := core.NewTuple(data.Map{
-			"width":  data.Int(s.width),
-			"height": data.Int(s.height),
-			"format": data.String("cvmat"),
-			"mode":   data.String(s.formatStr),
-			"image":  data.Blob(frame),
+			"width":       data.Int(s.width),
+			"height":      data.Int(s.height),
+			"format":      data.String("cvmat"),
+			"color_model": data.String(s.formatStr),
+			"image":       data.Blob(frame),
 		})
 		if err := w.Write(ctx, t); err != nil {
 			return err
