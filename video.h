@@ -12,7 +12,7 @@ typedef struct RaspivideoCamera RaspivideoCamera;
 typedef enum {
     RaspivideoFormatRGB,
     RaspivideoFormatBGR,
-    // TODO: support RaspivideoFormatJpeg
+    RaspivideoFormatJPEG,
 } RaspivideoFormat;
 
 typedef enum {
@@ -30,6 +30,11 @@ typedef enum {
     RaspivideoCannotSendBuffer,
     RaspivideoCannotStartCapture,
     RaspivideoCameraDestroyed,
+    RaspivideoCannotCreateEncoder,
+    RaspivideoCannotEnableEncoder,
+    RaspivideoCannotEnableEncoderPort,
+    RaspivideoCannotCreateConnection,
+    RaspivideoCannotEnableConnection,
 } RaspivideoErrorCode;
 
 /*

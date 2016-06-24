@@ -3,6 +3,7 @@
 #include "bcm_host.h"
 #include "interface/mmal/mmal.h"
 #include "interface/mmal/util/mmal_default_components.h"
+#include "interface/mmal/util/mmal_connection.h"
 #include "interface/mmal/util/mmal_util.h"
 #include "interface/mmal/util/mmal_util_params.h"
 #include "interface/vcos/vcos.h"
@@ -21,6 +22,8 @@ struct RaspivideoCamera {
     int width, height;
     RaspivideoFormat format;
     MMAL_COMPONENT_T* camera;
+    MMAL_COMPONENT_T* encoder;
+    MMAL_CONNECTION_T* conn;
     MMAL_POOL_T* pool;
 
     pthread_mutex_t mutex;
@@ -40,7 +43,9 @@ struct RaspivideoCamera {
     int waiting;
 };
 
-static int createCameraComponent(RaspivideoCamera* camera);
+static RaspivideoErrorCode createCameraComponent(RaspivideoCamera* camera);
+static RaspivideoErrorCode createEncoderComponent(RaspivideoCamera* c);
+static RaspivideoErrorCode allocatePool(RaspivideoCamera* c);
 
 void RaspivideoInitialize() {
     // Go code ensures that this is only called once.
@@ -73,6 +78,20 @@ RaspivideoErrorCode RaspivideoCreateCamera(RaspivideoCamera** camera, int width,
     c->format = format;
     ec = createCameraComponent(c);
     if (ec) goto cleanup;
+    if (format == RaspivideoFormatJPEG) {
+        ec = createEncoderComponent(c);
+        if (ec) goto cleanup;
+    }
+    ec = allocatePool(c);
+    if (ec) goto cleanup;
+
+    {   // Start capturing video
+        MMAL_STATUS_T status = mmal_port_parameter_set_boolean(c->camera->output[1], MMAL_PARAMETER_CAPTURE, MMAL_TRUE);
+        if (status != MMAL_SUCCESS) {
+            ec = RaspivideoCannotStartCapture;
+            goto cleanup;
+        }
+    }
     *camera = c;
     return RaspivideoSuccess;
 
@@ -129,7 +148,11 @@ void RaspivideoDestroyCamera(RaspivideoCamera* c) {
     }
 
     // TODO: destroy pool if it isn't actually destroyed by mmal_component_destroy(c->camera)
+    if (c->conn) mmal_connection_destroy(c->conn);
+    if (c->encoder) mmal_component_destroy(c->encoder);
     if (c->camera) mmal_component_destroy(c->camera);
+    free(c->current.buffer);
+    free(c->captured.buffer);
     pthread_mutex_unlock(&c->mutex);
     pthread_mutex_destroy(&c->mutex);
     pthread_cond_destroy(&c->cond);
@@ -185,7 +208,7 @@ static void cameraOutputCallback(MMAL_PORT_T* port, MMAL_BUFFER_HEADER_T* buffer
     }
 }
 
-static int createCameraComponent(RaspivideoCamera* c) {
+static RaspivideoErrorCode createCameraComponent(RaspivideoCamera* c) {
     // TODO: add error handlings like RaspiVid or RaspiStill
     MMAL_COMPONENT_T* camera;
     MMAL_STATUS_T status;
@@ -238,7 +261,7 @@ static int createCameraComponent(RaspivideoCamera* c) {
 
     {
         MMAL_ES_FORMAT_T* f = video->format;
-        switch (c->format) {
+        switch (c->format) { // Assuming validation is done in Go
         case RaspivideoFormatRGB:
             // In libmmal's RGB, colors are in BGR order in a byte array.
             f->encoding = MMAL_ENCODING_BGR24;
@@ -247,8 +270,11 @@ static int createCameraComponent(RaspivideoCamera* c) {
         case RaspivideoFormatBGR:
             f->encoding = MMAL_ENCODING_RGB24;
             f->encoding_variant = MMAL_ENCODING_RGB24;
-
-            // Assuming validation is done in Go
+            break;
+        case RaspivideoFormatJPEG:
+            f->encoding = MMAL_ENCODING_I420;
+            f->encoding_variant = MMAL_ENCODING_I420;
+            break;
         }
         f->es->video.width = VCOS_ALIGN_UP(c->width, 32);
         f->es->video.height = VCOS_ALIGN_UP(c->height, 16);
@@ -267,32 +293,85 @@ static int createCameraComponent(RaspivideoCamera* c) {
     if (status != MMAL_SUCCESS) {
         return RaspivideoCannotEnableCamera;
     }
-
-    // TODO: when supporting JPEG, an encoder needs to be created for hardware encoding.
-
-    // TODO: This pool should indirectly be destroyed by mmal_destroy_component but need to be checked.
-    c->pool = mmal_port_pool_create(video, video->buffer_num, video->buffer_size);
-    if (c->pool == NULL) {
-        return RaspivideoCannotCreatePool;
+    if (c->format == RaspivideoFormatJPEG) {
+        // When the format is JPEG, video port will be connected to the encoder
+        // and it should not be enabled in this function.
+        return 0;
     }
+
     status = mmal_port_enable(video, cameraOutputCallback);
     if (status != MMAL_SUCCESS) {
         return RaspivideoCannotEnableVideoPort;
+    }
+    return 0;
+}
+
+static RaspivideoErrorCode createEncoderComponent(RaspivideoCamera* c) {
+    MMAL_COMPONENT_T* e;
+    MMAL_PORT_T* e_in;
+    MMAL_PORT_T* e_out;
+    MMAL_STATUS_T status = mmal_component_create(MMAL_COMPONENT_DEFAULT_IMAGE_ENCODER, &c->encoder);
+    if (status != MMAL_SUCCESS) {
+        return RaspivideoCannotCreateEncoder;
+    }
+    e = c->encoder;
+    e_in = e->input[0];
+    e_out = e->output[0];
+    mmal_format_copy(e_out->format, e_in->format);
+    e_out->format->encoding = MMAL_ENCODING_JPEG;
+    e_out->buffer_num = e_out->buffer_num_recommended;
+    if (e_out->buffer_num < e_out->buffer_num_min) {
+        e_out->buffer_num = e_out->buffer_num_min;
+    }
+    e_out->buffer_size = e_out->buffer_size_recommended;
+    if (e_out->buffer_size < e_out->buffer_size_min) {
+        e_out->buffer_size = e_out->buffer_size_min;
+    }
+    status = mmal_port_format_commit(e_out);
+    if (status != MMAL_SUCCESS) {
+        return RaspivideoCannotCommitFormat;
+    }
+    status = mmal_component_enable(e);
+    if (status != MMAL_SUCCESS) {
+        return RaspivideoCannotEnableEncoder;
+    }
+
+    e_out->userdata = (struct MMAL_PORT_USERDATA_T*) c;
+    status = mmal_port_enable(e_out, cameraOutputCallback);
+    if (status != MMAL_SUCCESS) {
+        return RaspivideoCannotEnableEncoderPort;
+    }
+
+    // Create connection between camera and encoder
+    status =  mmal_connection_create(&c->conn, c->camera->output[1], e_in,
+        MMAL_CONNECTION_FLAG_TUNNELLING | MMAL_CONNECTION_FLAG_ALLOCATION_ON_INPUT);
+    if (status != MMAL_SUCCESS) {
+        return RaspivideoCannotCreateConnection;
+    }
+    status =  mmal_connection_enable(c->conn);
+    if (status != MMAL_SUCCESS) {
+        return RaspivideoCannotEnableConnection;
+    }
+    return RaspivideoSuccess;
+}
+
+static RaspivideoErrorCode allocatePool(RaspivideoCamera* c) {
+    MMAL_PORT_T* p = c->format == RaspivideoFormatJPEG ? c->encoder->output[0] : c->camera->output[1];
+
+    // TODO: This pool should indirectly be destroyed by mmal_destroy_component but need to be checked.
+    c->pool = mmal_port_pool_create(p, p->buffer_num, p->buffer_size);
+    if (c->pool == NULL) {
+        return RaspivideoCannotCreatePool;
     }
 
     {
         MMAL_BUFFER_HEADER_T* buffer;
         while ((buffer = mmal_queue_get(c->pool->queue)) != NULL) {
-            status = mmal_port_send_buffer(video, buffer);
+            MMAL_STATUS_T status = mmal_port_send_buffer(p, buffer);
             if (status != MMAL_SUCCESS) {
                 return RaspivideoCannotSendBuffer;
             }
         }
     }
-
-    status = mmal_port_parameter_set_boolean(video, MMAL_PARAMETER_CAPTURE, MMAL_TRUE);
-    if (status != MMAL_SUCCESS) {
-        return RaspivideoCannotStartCapture;
-    }
-    return 0;
+    return RaspivideoSuccess;
 }

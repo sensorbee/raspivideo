@@ -71,6 +71,10 @@ func (s *Source) GenerateStream(ctx *core.Context, w core.Writer) error {
 			"color_model": data.String(s.formatStr),
 			"image":       data.Blob(frame),
 		})
+		if s.format == C.RaspivideoFormatJPEG {
+			t.Data["format"] = data.String("jpeg")
+			delete(t.Data, "color_model")
+		}
 		if err := w.Write(ctx, t); err != nil {
 			return err
 		}
@@ -109,6 +113,16 @@ func toError(c C.RaspivideoErrorCode) error {
 			return "cannot start capture"
 		case C.RaspivideoCameraDestroyed:
 			return "camera has already been destroyed"
+		case C.RaspivideoCannotCreateEncoder:
+			return "cannot create encoder object"
+		case C.RaspivideoCannotEnableEncoder:
+			return "cannot enable encoder"
+		case C.RaspivideoCannotEnableEncoderPort:
+			return "cannot enable output port of the encoder"
+		case C.RaspivideoCannotCreateConnection:
+			return "cannot connect camera and encoder"
+		case C.RaspivideoCannotEnableConnection:
+			return "cannot enable camera-encoder connection"
 		default:
 			return "unknown error"
 		}
@@ -166,8 +180,9 @@ func CreateSource(ctx *core.Context, ioParams *bql.IOParams, params data.Map) (c
 
 var (
 	validFormats = map[string]C.RaspivideoFormat{
-		"rgb": C.RaspivideoFormatRGB,
-		"bgr": C.RaspivideoFormatBGR,
+		"rgb":  C.RaspivideoFormatRGB,
+		"bgr":  C.RaspivideoFormatBGR,
+		"jpeg": C.RaspivideoFormatJPEG,
 	}
 )
 
